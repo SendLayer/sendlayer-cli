@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  # The compiled binary resolves commands differently from the npm install
+  # (see bin/binary.js), so it needs its own check. Building it in CI and
+  # running it from a directory with no package.json catches regressions where
+  # the binary silently depends on the build tree.
+  binary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '20'
+          cache: npm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: npm ci
+      - run: npm run build
+      - run: bash scripts/build-binaries.sh 0.0.0-ci
+
+      - name: Run binary outside the build tree
+        run: |
+          # Unpack somewhere with no package.json above it, then delete the
+          # source checkout so nothing can resolve back to it.
+          mkdir -p /tmp/slcheck
+          tar -xzf dist-bin/sendlayer_0.0.0-ci_linux_x64.tar.gz -C /tmp/slcheck
+          rm -rf "$GITHUB_WORKSPACE"/{dist,node_modules,src,package.json,oclif.manifest.json}
+          cd /tmp/slcheck
+          ./sendlayer --version
+          ./sendlayer --help > /dev/null
+          ./sendlayer webhooks list --help > /dev/null
+          ./sendlayer emails send --help > /dev/null
+          # Every command in the manifest must be reachable.
+          for cmd in login logout whoami "emails send" "events list" \
+                     "webhooks create" "webhooks delete" "webhooks list" "webhooks listen"; do
+            ./sendlayer $cmd --help > /dev/null || { echo "FAILED: $cmd"; exit 1; }
+          done
+          echo "All commands reachable."
+
+  installers:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Parse-check install.ps1
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path ./scripts/install.ps1).Path, [ref]$null, [ref]$errors) | Out-Null
+          if ($errors) { $errors | ForEach-Object { Write-Error $_.Message }; exit 1 }
+          Write-Host 'install.ps1 parses cleanly.'
+      - name: Shellcheck install.sh
+        shell: bash
+        run: |
+          bash -n scripts/install.sh
+          bash -n scripts/build-binaries.sh
+          bash -n scripts/gen-homebrew-formula.sh
+          echo 'Shell scripts parse cleanly.'

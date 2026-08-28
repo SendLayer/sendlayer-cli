@@ -1,0 +1,48 @@
+# SUPERSEDED — kept for reference only. Do not ship this file.
+#
+# The formula is now generated per release by scripts/gen-homebrew-formula.sh,
+# which fills in the real checksums from dist-bin/SHA256SUMS and is committed to
+# the tap by the publish-homebrew job in .github/workflows/release.yml.
+#
+# It previously claimed to be auto-bumped by mislav/bump-homebrew-formula-action,
+# but that action rewrites only a single url+sha256 pair and cannot update the
+# four platform blocks below. See the internal deployment guide.
+#
+# Tap install: brew install sendlayer/sendlayer/sendlayer
+
+class Sendlayer < Formula
+  desc "Command-line interface for the SendLayer transactional email API"
+  homepage "https://github.com/SendLayer/sendlayer-cli"
+  version "0.1.0"
+  license "MIT"
+
+  on_macos do
+    on_arm do
+      url "https://github.com/SendLayer/sendlayer-cli/releases/download/v#{version}/sendlayer_#{version}_darwin_arm64.tar.gz"
+      sha256 "REPLACE_DARWIN_ARM64_SHA"
+    end
+    on_intel do
+      url "https://github.com/SendLayer/sendlayer-cli/releases/download/v#{version}/sendlayer_#{version}_darwin_x64.tar.gz"
+      sha256 "REPLACE_DARWIN_X64_SHA"
+    end
+  end
+
+  on_linux do
+    on_arm do
+      url "https://github.com/SendLayer/sendlayer-cli/releases/download/v#{version}/sendlayer_#{version}_linux_arm64.tar.gz"
+      sha256 "REPLACE_LINUX_ARM64_SHA"
+    end
+    on_intel do
+      url "https://github.com/SendLayer/sendlayer-cli/releases/download/v#{version}/sendlayer_#{version}_linux_x64.tar.gz"
+      sha256 "REPLACE_LINUX_X64_SHA"
+    end
+  end
+
+  def install
+    bin.install "sendlayer"
+  end
+
+  test do
+    assert_match version.to_s, shell_output("#{bin}/sendlayer --version")
+  end
+end
