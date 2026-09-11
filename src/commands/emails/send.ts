@@ -22,8 +22,28 @@ const MIME_BY_EXT: Record<string, string> = {
   '.zip': 'application/zip',
 };
 
-function guessMime(filename: string): string {
+/** A leading Windows drive designator, e.g. the "C:" in C:\Users\me\report.pdf. */
+const DRIVE_PREFIX = /^([A-Za-z]:)([\\/].*)$/;
+
+export function guessMime(filename: string): string {
   return MIME_BY_EXT[path.extname(filename).toLowerCase()] || DEFAULT_MIME;
+}
+
+/**
+ * Split `path[:mime[:disposition[:filename]]]` into its fields.
+ *
+ * The delimiter also appears inside absolute Windows paths, so the drive
+ * designator is set aside before splitting and restored afterwards. Any colons
+ * past the fourth field belong to the filename.
+ */
+export function splitAttachmentSpec(entry: string): string[] {
+  const drive = DRIVE_PREFIX.exec(entry);
+  const parts = (drive ? drive[2] : entry).split(':');
+  if (drive) parts[0] = drive[1] + parts[0];
+  if (parts.length > 4) {
+    return [...parts.slice(0, 3), parts.slice(3).join(':')];
+  }
+  return parts;
 }
 
 function parseRecipientList(value: string | undefined): EmailRecipient[] | undefined {
@@ -47,7 +67,7 @@ function parseSingleRecipient(value: string | undefined): EmailRecipient | undef
   return list?.[0];
 }
 
-function parseHeaders(values: string[] | undefined): Record<string, string> | undefined {
+export function parseHeaders(values: string[] | undefined): Record<string, string> | undefined {
   if (!values?.length) return undefined;
   const out: Record<string, string> = {};
   for (const entry of values) {
@@ -60,11 +80,11 @@ function parseHeaders(values: string[] | undefined): Record<string, string> | un
   return out;
 }
 
-function parseAttachments(values: string[] | undefined): EmailAttachment[] | undefined {
+export function parseAttachments(values: string[] | undefined): EmailAttachment[] | undefined {
   if (!values?.length) return undefined;
   return values.map((entry) => {
     // Format: path[:mime[:disposition[:filename]]]
-    const [filePath, mime, disposition, filename] = entry.split(':');
+    const [filePath, mime, disposition, filename] = splitAttachmentSpec(entry);
     if (!filePath) throw new Error('Attachment path is required');
     return {
       path: filePath,
