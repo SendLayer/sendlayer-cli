@@ -2,12 +2,18 @@ import * as fs from 'node:fs';
 import * as http from 'node:http';
 import chalk from 'chalk';
 import type { SendLayer } from 'sendlayer';
-import { listenStatePath, configDir } from './auth';
+import { listenStatePath, writePrivateFile } from './auth';
+
+/**
+ * Cap on an incoming webhook body. The listen endpoint is deliberately exposed
+ * through a public tunnel, so an unbounded body is an easy way to exhaust
+ * memory on a dev machine.
+ */
+const MAX_BODY_BYTES = 1024 * 1024;
 
 export interface ListenStateEntry {
   webhookIds: number[];
   publicUrl: string;
-  apiKeyHash: string;
   startedAt: string;
 }
 
@@ -22,11 +28,6 @@ function hashKey(apiKey: string): string {
   return `k${(h >>> 0).toString(16)}`;
 }
 
-function ensureDir(): void {
-  const dir = configDir();
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-}
-
 function readState(): ListenState {
   const file = listenStatePath();
   if (!fs.existsSync(file)) return {};
@@ -38,8 +39,7 @@ function readState(): ListenState {
 }
 
 function writeState(state: ListenState): void {
-  ensureDir();
-  fs.writeFileSync(listenStatePath(), JSON.stringify(state, null, 2), { mode: 0o600 });
+  writePrivateFile(listenStatePath(), JSON.stringify(state, null, 2));
 }
 
 export function recordListenSession(apiKey: string, entry: ListenStateEntry): void {
@@ -68,8 +68,14 @@ export interface ListenOptions {
   log: (msg: string) => void;
 }
 
-export async function registerWebhooks(opts: ListenOptions): Promise<number[]> {
-  const ids: number[] = [];
+/**
+ * Register one webhook per event type, appending each new id to `ids`.
+ *
+ * The array is caller-owned on purpose: if a later call fails, the caller still
+ * holds the ids created before the failure and can clean them up. Returning
+ * them would lose exactly the ids that matter.
+ */
+export async function registerWebhooks(opts: ListenOptions, ids: number[]): Promise<number[]> {
   for (const event of opts.events) {
     const result = await opts.client.Webhooks.create({ url: opts.publicUrl, event });
     ids.push(result.NewWebhookID);
@@ -94,11 +100,30 @@ export interface ListenServer {
   close: () => Promise<void>;
 }
 
-export function startListenServer(opts: {
+/**
+ * Resolve `false` if `work` hasn't settled within `ms`.
+ *
+ * Used to bound webhook cleanup on shutdown: a hung API call shouldn't leave
+ * the user stuck in a Ctrl+C that never finishes.
+ */
+export async function withTimeout(work: Promise<unknown>, ms: number): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  const expired = new Promise<boolean>((resolve) => {
+    timer = setTimeout(() => resolve(false), ms);
+    timer.unref();
+  });
+  try {
+    return await Promise.race([work.then(() => true), expired]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+export async function startListenServer(opts: {
   port: number;
   forwardTo?: string;
   log: (msg: string) => void;
-}): ListenServer {
+}): Promise<ListenServer> {
   const server = http.createServer(async (req, res) => {
     if (req.method !== 'POST') {
       res.statusCode = 405;
@@ -106,8 +131,23 @@ export function startListenServer(opts: {
       return;
     }
     const chunks: Buffer[] = [];
-    req.on('data', (c: Buffer) => chunks.push(c));
+    let received = 0;
+    let tooLarge = false;
+    req.on('data', (c: Buffer) => {
+      if (tooLarge) return;
+      received += c.length;
+      if (received > MAX_BODY_BYTES) {
+        tooLarge = true;
+        opts.log(chalk.yellow(`  ! rejected a body over ${MAX_BODY_BYTES} bytes`));
+        res.statusCode = 413;
+        res.end();
+        req.destroy();
+        return;
+      }
+      chunks.push(c);
+    });
     req.on('end', async () => {
+      if (tooLarge) return;
       const raw = Buffer.concat(chunks).toString('utf8');
       let parsed: unknown;
       try {
@@ -142,10 +182,42 @@ export function startListenServer(opts: {
     });
   });
 
-  server.listen(opts.port);
+  // Resolve only once the port is actually bound, so a caller that has already
+  // registered webhooks learns about EADDRINUSE (a routine occurrence on 4000)
+  // in time to clean them up, instead of the process dying on an unhandled
+  // 'error' event with the webhooks left pointing at nothing.
+  await new Promise<void>((resolve, reject) => {
+    const onError = (err: NodeJS.ErrnoException): void => {
+      server.removeListener('listening', onListening);
+      reject(
+        err.code === 'EADDRINUSE'
+          ? new Error(`Port ${opts.port} is already in use. Pass --port to choose another.`)
+          : err,
+      );
+    };
+    const onListening = (): void => {
+      server.removeListener('error', onError);
+      resolve();
+    };
+    server.once('error', onError);
+    server.once('listening', onListening);
+    server.listen(opts.port);
+  });
+
+  // Past startup, a socket-level error shouldn't take the listener down.
+  server.on('error', (err: Error) => {
+    opts.log(chalk.yellow(`  ! server error: ${err.message}`));
+  });
 
   return {
-    close: () => new Promise((resolve) => server.close(() => resolve())),
+    close: () =>
+      new Promise((resolve) => {
+        server.close(() => resolve());
+        // close() waits for open connections, and a tunnel holds a keep-alive
+        // connection open — so without this, shutdown blocks until the tunnel
+        // itself goes away. In-flight requests still get to finish.
+        server.closeIdleConnections();
+      }),
   };
 }
 

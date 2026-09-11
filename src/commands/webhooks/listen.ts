@@ -2,7 +2,7 @@ import { Flags } from '@oclif/core';
 import chalk from 'chalk';
 import prompts from 'prompts';
 import { BaseCommand } from '../../base-command';
-import { handleError } from '../../lib/errors';
+import { ExitCodes, handleError } from '../../lib/errors';
 import {
   clearListenSession,
   deleteWebhooks,
@@ -10,9 +10,14 @@ import {
   recordListenSession,
   registerWebhooks,
   startListenServer,
+  withTimeout,
+  type ListenServer,
 } from '../../lib/tunnel';
 
 const ALL_EVENTS = ['bounce', 'click', 'open', 'unsubscribe', 'complaint', 'delivery'];
+
+/** How long shutdown waits for webhook deletion before giving up. */
+const CLEANUP_TIMEOUT_MS = 10_000;
 
 export default class WebhooksListen extends BaseCommand<typeof WebhooksListen> {
   static description = 'Receive webhook events locally and (optionally) forward them to a local URL.';
@@ -56,8 +61,11 @@ export default class WebhooksListen extends BaseCommand<typeof WebhooksListen> {
       return handleError(flags, new Error(`Unknown event types: ${invalid.join(', ')}`));
     }
 
+    // Key the session record by the credentials actually in use. Deriving it
+    // from the flag alone collapsed every stored profile onto one slot, so a
+    // run under one profile could offer to delete another account's webhooks.
+    const apiKey = this.resolveAuth().apiKey;
     const client = this.getClient();
-    const apiKey = (flags['api-key'] as string | undefined) ?? process.env.SENDLAYER_API_KEY ?? 'stored';
 
     // Recovery: stale webhooks from a previous crashed run?
     const stale = getListenSession(apiKey);
@@ -82,22 +90,26 @@ export default class WebhooksListen extends BaseCommand<typeof WebhooksListen> {
     this.log(chalk.dim(`Tunnel hint: 'ngrok http ${flags.port}' or 'cloudflared tunnel --url http://localhost:${flags.port}'`));
     this.log('');
 
-    let webhookIds: number[] = [];
+    // Owned here and filled in by registerWebhooks, so a failure partway
+    // through still leaves us holding the ids created so far.
+    const webhookIds: number[] = [];
     try {
       this.log(chalk.bold('Registering webhooks...'));
-      webhookIds = await registerWebhooks({
-        client,
-        apiKey,
-        publicUrl: flags['public-url'],
-        port: flags.port,
-        forwardTo: flags['forward-to'],
-        events,
-        log: (m) => this.log(m),
-      });
+      await registerWebhooks(
+        {
+          client,
+          apiKey,
+          publicUrl: flags['public-url'],
+          port: flags.port,
+          forwardTo: flags['forward-to'],
+          events,
+          log: (m) => this.log(m),
+        },
+        webhookIds,
+      );
       recordListenSession(apiKey, {
         webhookIds,
         publicUrl: flags['public-url'],
-        apiKeyHash: 'sha-omitted',
         startedAt: new Date().toISOString(),
       });
     } catch (err) {
@@ -106,25 +118,49 @@ export default class WebhooksListen extends BaseCommand<typeof WebhooksListen> {
       return handleError(flags, err);
     }
 
-    const server = startListenServer({
-      port: flags.port,
-      forwardTo: flags['forward-to'],
-      log: (m) => this.log(m),
-    });
+    let server: ListenServer;
+    try {
+      server = await startListenServer({
+        port: flags.port,
+        forwardTo: flags['forward-to'],
+        log: (m) => this.log(m),
+      });
+    } catch (err) {
+      // The webhooks are live but nothing is listening — take them back down.
+      await deleteWebhooks(client, webhookIds, (m) => this.log(m));
+      clearListenSession(apiKey);
+      return handleError(flags, err);
+    }
 
     this.log(chalk.green(`✓ Listening. Press Ctrl+C to stop.`));
 
     let shuttingDown = false;
     const shutdown = async (signal: string) => {
-      if (shuttingDown) return;
+      // A second Ctrl+C means "I don't care about cleanup, let me out".
+      if (shuttingDown) {
+        this.log(chalk.yellow(`Received ${signal} again — exiting without finishing cleanup.`));
+        this.log(chalk.dim(`  Run 'sendlayer webhooks listen' again to remove: ${webhookIds.join(', ')}`));
+        process.exit(ExitCodes.INTERRUPTED);
+      }
       shuttingDown = true;
       this.log('');
-      this.log(chalk.bold(`Received ${signal}. Cleaning up...`));
-      await server.close();
-      await deleteWebhooks(client, webhookIds, (m) => this.log(m));
-      clearListenSession(apiKey);
-      this.log(chalk.green('✓ Done.'));
-      process.exit(0);
+      this.log(chalk.bold(`Received ${signal}. Cleaning up... (Ctrl+C again to skip)`));
+      // A request still in flight shouldn't hold shutdown open for long.
+      await withTimeout(server.close(), CLEANUP_TIMEOUT_MS);
+      const cleaned = await withTimeout(
+        deleteWebhooks(client, webhookIds, (m) => this.log(m)),
+        CLEANUP_TIMEOUT_MS,
+      );
+      if (cleaned) {
+        // Only drop the session record once the webhooks are really gone,
+        // otherwise the next run can't offer to clean them up.
+        clearListenSession(apiKey);
+        this.log(chalk.green('✓ Done.'));
+        process.exit(0);
+      }
+      this.log(chalk.yellow(`! Cleanup timed out after ${CLEANUP_TIMEOUT_MS / 1000}s.`));
+      this.log(chalk.dim('  The next run will offer to remove any webhooks left behind.'));
+      process.exit(ExitCodes.INTERRUPTED);
     };
 
     process.on('SIGINT', () => shutdown('SIGINT'));

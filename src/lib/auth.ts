@@ -60,15 +60,24 @@ export function readCredentials(): CredentialsFile {
   }
 }
 
-export function writeCredentials(data: CredentialsFile): void {
+/**
+ * Write a file inside the config dir with owner-only permissions.
+ *
+ * `mode` on writeFileSync only applies when the file is created, so an existing
+ * file keeps whatever permissions it had — hence the explicit chmod.
+ */
+export function writePrivateFile(file: string, contents: string): void {
   ensureConfigDir();
-  const file = credentialsPath();
-  fs.writeFileSync(file, JSON.stringify(data, null, 2), { mode: FILE_MODE });
+  fs.writeFileSync(file, contents, { mode: FILE_MODE });
   try {
     fs.chmodSync(file, FILE_MODE);
   } catch {
     // best-effort on platforms that ignore mode (e.g. Windows)
   }
+}
+
+export function writeCredentials(data: CredentialsFile): void {
+  writePrivateFile(credentialsPath(), JSON.stringify(data, null, 2));
 }
 
 export function saveApiKey(apiKey: string, profile = 'default'): void {
