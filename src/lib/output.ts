@@ -1,5 +1,35 @@
 import chalk from 'chalk';
 
+/** Upper bound on how long we wait for a slow pipe to accept buffered output. */
+const DRAIN_TIMEOUT_MS = 2000;
+
+function drain(stream: NodeJS.WriteStream): Promise<void> {
+  // An empty write reports whether the stream buffer is already below the
+  // high-water mark; when it is, there is nothing left to flush.
+  if (stream.write('')) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    const done = (): void => {
+      clearTimeout(timer);
+      stream.removeListener('drain', done);
+      resolve();
+    };
+    const timer = setTimeout(done, DRAIN_TIMEOUT_MS);
+    timer.unref();
+    stream.once('drain', done);
+  });
+}
+
+/**
+ * Wait for stdout and stderr to be written out.
+ *
+ * Writes to a pipe are asynchronous, so exiting straight after a write can
+ * truncate it — which matters most in JSON mode, since that is exactly the
+ * case where stdout isn't a TTY (e.g. piping to jq).
+ */
+export async function drainOutput(): Promise<void> {
+  await Promise.all([drain(process.stdout), drain(process.stderr)]);
+}
+
 export function isJsonMode(flags: { json?: boolean } | undefined): boolean {
   if (flags?.json) return true;
   // Auto-detect non-TTY (CI, pipes) and emit JSON.

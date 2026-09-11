@@ -1,6 +1,7 @@
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import { resolveApiKey, maskApiKey, credentialsPath, readCredentials } from '../lib/auth';
+import { ExitCodes } from '../lib/errors';
 import { isJsonMode } from '../lib/output';
 
 export default class Whoami extends Command {
@@ -31,6 +32,9 @@ export default class Whoami extends Command {
 
     if (isJsonMode(flags)) {
       this.log(JSON.stringify(payload, null, 2));
+      // Report the same failure in both modes: the JSON path used to return 0
+      // even when nothing was configured, so a script had no way to tell.
+      if (!auth) this.exit(ExitCodes.AUTH_MISSING);
       return;
     }
 
@@ -38,7 +42,7 @@ export default class Whoami extends Command {
       this.log(chalk.yellow('Not authenticated.'));
       this.log(chalk.dim(`Run 'sendlayer login' or set SENDLAYER_API_KEY.`));
       this.log(chalk.dim(`Config path: ${credentialsPath()}`));
-      this.exit(3);
+      this.exit(ExitCodes.AUTH_MISSING);
       return;
     }
 

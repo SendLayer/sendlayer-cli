@@ -1,3 +1,4 @@
+import { Errors } from '@oclif/core';
 import { SendLayerAPIError, SendLayerError } from 'sendlayer';
 import { emitError } from './output';
 
@@ -20,7 +21,19 @@ export interface CliErrorPayload {
   exitCode: number;
 }
 
+/**
+ * oclif's own parse errors (missing required flag, bad --flag value, unexpected
+ * argument). They already carry a rendered message and the `--help` output, so
+ * they are re-thrown rather than reformatted — see BaseCommand.catch.
+ */
+export function isUsageError(err: unknown): err is Errors.CLIError & { parse?: unknown } {
+  return err instanceof Errors.CLIError && 'parse' in err;
+}
+
 export function describeError(err: unknown): CliErrorPayload {
+  if (isUsageError(err)) {
+    return { message: err.message, code: 'USAGE', exitCode: ExitCodes.USAGE };
+  }
   if (err instanceof SendLayerAPIError) {
     return {
       message: err.message,
@@ -38,8 +51,24 @@ export function describeError(err: unknown): CliErrorPayload {
   return { message: String(err), exitCode: ExitCodes.GENERIC };
 }
 
-export function handleError(flags: { json?: boolean } | undefined, err: unknown): never {
-  const payload = describeError(err);
+/**
+ * Stop the command with `code`.
+ *
+ * Throwing oclif's ExitError rather than calling process.exit() hands control
+ * back to oclif, which flushes output before exiting. BaseCommand.catch drains
+ * stdout/stderr on the way through.
+ */
+export function exitWith(code: number): never {
+  process.exitCode = code;
+  throw new Errors.ExitError(code);
+}
+
+/** Report an already-described failure and stop with its exit code. */
+export function failWith(flags: { json?: boolean } | undefined, payload: CliErrorPayload): never {
   emitError(flags, payload);
-  process.exit(payload.exitCode);
+  exitWith(payload.exitCode);
+}
+
+export function handleError(flags: { json?: boolean } | undefined, err: unknown): never {
+  failWith(flags, describeError(err));
 }

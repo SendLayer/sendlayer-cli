@@ -1,10 +1,10 @@
-import { Command, Flags } from '@oclif/core';
+import { Command, Errors, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import prompts from 'prompts';
 import { saveApiKey, credentialsPath, maskApiKey } from '../lib/auth';
 import { getClient } from '../lib/client';
-import { describeError, handleError } from '../lib/errors';
-import { isJsonMode } from '../lib/output';
+import { describeError, exitWith, ExitCodes, failWith, handleError } from '../lib/errors';
+import { drainOutput, isJsonMode } from '../lib/output';
 
 export default class Login extends Command {
   static description = 'Save a SendLayer API key for future commands.';
@@ -45,7 +45,7 @@ export default class Login extends Command {
       });
       apiKey = response.apiKey as string | undefined;
       if (!apiKey) {
-        process.exit(130);
+        exitWith(ExitCodes.INTERRUPTED);
       }
     }
 
@@ -55,8 +55,17 @@ export default class Login extends Command {
         await getClient(apiKey).Webhooks.get();
       } catch (err) {
         const desc = describeError(err);
-        if (desc.code === 'API_ERROR' && /401|403/.test(JSON.stringify(desc.details ?? ''))) {
-          handleError(flags, new Error('API key rejected by SendLayer (401/403). Check the key and try again.'));
+        // describeError already derived this from the HTTP status; matching on
+        // the serialised body would also hit a 401 or 403 appearing in an id,
+        // a record count, or a timestamp.
+        if (desc.exitCode === ExitCodes.AUTH_INVALID) {
+          // Keep the classification: wrapping this in a plain Error would
+          // report the rejection but exit with the generic code.
+          failWith(flags, {
+            message: 'API key rejected by SendLayer (401/403). Check the key and try again.',
+            code: 'AUTH_INVALID',
+            exitCode: ExitCodes.AUTH_INVALID,
+          });
         }
         // Network errors etc. — surface but allow opt-out via --no-validate
         handleError(flags, new Error(`Could not validate key: ${desc.message}. Re-run with --no-validate to skip.`));
@@ -73,5 +82,14 @@ export default class Login extends Command {
     this.log(chalk.green('✓') + ` API key saved to profile ${chalk.bold(flags.profile)}`);
     this.log(chalk.dim(`  Key: ${maskApiKey(apiKey)}`));
     this.log(chalk.dim(`  Path: ${credentialsPath()}`));
+  }
+
+  protected async catch(err: Error & { exitCode?: number }): Promise<void> {
+    // Let the already-written message reach a pipe before oclif exits.
+    if (err instanceof Errors.ExitError) {
+      await drainOutput();
+      throw err;
+    }
+    return super.catch(err);
   }
 }
