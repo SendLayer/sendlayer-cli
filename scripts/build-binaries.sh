@@ -71,5 +71,24 @@ for spec in "${TARGETS[@]}"; do
 done
 
 echo "==> Generating SHA256SUMS"
-(cd "$OUT_DIR" && shasum -a 256 sendlayer_*.tar.gz sendlayer_*.zip 2>/dev/null > SHA256SUMS || true)
+
+# scripts/install.sh verifies every download against this file, so an empty or
+# missing SHA256SUMS breaks installation for everyone. Fail the build instead.
+# install.sh accepts either tool, so accept either here too.
+if command -v shasum >/dev/null 2>&1; then
+  SHA_CMD=(shasum -a 256)
+elif command -v sha256sum >/dev/null 2>&1; then
+  SHA_CMD=(sha256sum)
+else
+  echo "Need 'shasum' or 'sha256sum' to generate SHA256SUMS." >&2
+  exit 1
+fi
+
+(cd "$OUT_DIR" && "${SHA_CMD[@]}" sendlayer_*.tar.gz sendlayer_*.zip > SHA256SUMS)
+
+if [ ! -s "$OUT_DIR/SHA256SUMS" ]; then
+  echo "SHA256SUMS is empty — refusing to ship unverifiable archives." >&2
+  exit 1
+fi
+
 cat "$OUT_DIR/SHA256SUMS"

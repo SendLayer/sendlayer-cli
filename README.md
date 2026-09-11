@@ -87,13 +87,16 @@ winget install SendLayer.SendLayerCLI
 
 ```sh
 sendlayer login
-# or non-interactive:
-sendlayer login --key sl_xxx
-# or just set the env var:
+# or set the env var, which every command reads:
 export SENDLAYER_API_KEY=sl_xxx
+# or non-interactive, reading the key from the environment:
+sendlayer login --key "$SENDLAYER_API_KEY"
 ```
 
 Auth resolution: `--api-key` flag → `SENDLAYER_API_KEY` env → stored credentials.
+
+Prefer the interactive prompt or the environment variable. A key passed on the
+command line is visible in your shell history and to anyone who can run `ps`.
 
 Check who you are:
 

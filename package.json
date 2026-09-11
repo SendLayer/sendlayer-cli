@@ -38,7 +38,7 @@
     "postbuild": "oclif manifest",
     "dev": "./bin/dev.js",
     "start": "./bin/run.js",
-    "lint": "eslint \"src/**/*.ts\"",
+    "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\"",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
