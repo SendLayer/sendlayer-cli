@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 
+import { useTempConfigHome } from '../helpers/config-home';
 import {
   configDir,
   credentialsPath,
@@ -13,36 +13,41 @@ import {
   maskApiKey,
 } from '../../src/lib/auth';
 
-let tmpHome: string;
+const home = useTempConfigHome();
 
 beforeEach(() => {
-  tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'sl-cli-'));
-  process.env.XDG_CONFIG_HOME = tmpHome;
   delete process.env.SENDLAYER_API_KEY;
 });
 
-afterEach(() => {
-  fs.rmSync(tmpHome, { recursive: true, force: true });
-  delete process.env.XDG_CONFIG_HOME;
-});
-
 describe('configDir / credentialsPath', () => {
-  it('honors XDG_CONFIG_HOME on linux/darwin', () => {
-    if (process.platform === 'win32') return;
-    expect(configDir()).toBe(path.join(tmpHome, 'sendlayer'));
-    expect(credentialsPath()).toBe(path.join(tmpHome, 'sendlayer', 'credentials.json'));
+  it('resolves under the redirected config home on every platform', () => {
+    expect(configDir()).toBe(path.join(home.dir, 'sendlayer'));
+    expect(credentialsPath()).toBe(path.join(home.dir, 'sendlayer', 'credentials.json'));
   });
 });
 
 describe('saveApiKey / readCredentials', () => {
-  it('writes 0600 credentials.json with the profile', () => {
-    if (process.platform === 'win32') return;
+  it('stores the key under the named profile', () => {
     saveApiKey('sl_abc123456789', 'default');
-    const data = readCredentials();
-    expect(data.profiles.default?.apiKey).toBe('sl_abc123456789');
+    expect(readCredentials().profiles.default?.apiKey).toBe('sl_abc123456789');
+  });
+
+  // Windows doesn't carry POSIX mode bits, so only assert them where they mean
+  // something. The redirection above keeps the write itself safe everywhere.
+  it.skipIf(process.platform === 'win32')('writes credentials.json as 0600', () => {
+    saveApiKey('sl_abc123456789', 'default');
     const stat = fs.statSync(credentialsPath());
-    // mode bits: only owner read+write
     expect((stat.mode & 0o777).toString(8)).toBe('600');
+  });
+
+  it('re-chmods an existing credentials file', () => {
+    saveApiKey('first', 'default');
+    fs.chmodSync(credentialsPath(), 0o644);
+    saveApiKey('second', 'default');
+    if (process.platform !== 'win32') {
+      expect((fs.statSync(credentialsPath()).mode & 0o777).toString(8)).toBe('600');
+    }
+    expect(readCredentials().profiles.default?.apiKey).toBe('second');
   });
 
   it('supports multiple profiles', () => {

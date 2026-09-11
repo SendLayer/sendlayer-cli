@@ -3,6 +3,8 @@ import { captureOutput } from '@oclif/test';
 import { Config } from '@oclif/core';
 import * as path from 'node:path';
 
+import { useTempConfigHome } from '../helpers/config-home';
+
 // Shared SDK mock, hoisted so the vi.mock factory below can reference it.
 const { sendMock } = vi.hoisted(() => ({ sendMock: vi.fn() }));
 
@@ -22,6 +24,9 @@ vi.mock('sendlayer', async (importOriginal) => {
 
 // Import AFTER the mock is registered so the command picks up the fake SDK.
 import EmailsSend from '../../src/commands/emails/send';
+
+// Keep every command test off the developer's real credentials file.
+useTempConfigHome();
 
 let config: Config;
 
