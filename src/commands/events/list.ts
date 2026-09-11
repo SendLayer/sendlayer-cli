@@ -68,7 +68,9 @@ export default class EventsList extends BaseCommand<typeof EventsList> {
         const rows = result.Events.map((e) => ({
           loggedAt: new Date(e.LoggedAt * 1000).toISOString(),
           event: e.Event,
-          recipient: (e as { Recipient?: string }).Recipient ?? '',
+          // Message.Headers.To is the recipient field the SDK actually declares;
+          // a top-level Recipient isn't part of the Event type.
+          recipient: e.Message?.Headers?.To?.join(', ') ?? '',
           messageId: e.Message?.Headers?.MessageId ?? '',
           subject: e.Message?.Headers?.Subject ?? '',
         }));

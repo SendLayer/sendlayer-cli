@@ -185,7 +185,7 @@ sendlayer events list --message-id <message-id>
 Every command supports `--json` for machine-readable output, and auto-detects non-TTY (CI/pipes) to default to JSON.
 
 ```sh
-sendlayer events list --json | jq '.Events[] | .Recipient'
+sendlayer events list --json | jq '.Events[] | .Message.Headers.To'
 ```
 
 ## Configuration
