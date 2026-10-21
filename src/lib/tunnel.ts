@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as http from 'node:http';
 import chalk from 'chalk';
-import type { SendLayer } from 'sendlayer';
+import { SendLayerAPIError, type SendLayer } from 'sendlayer';
 import { listenStatePath, writePrivateFile } from './auth';
 
 /**
@@ -42,15 +42,37 @@ function writeState(state: ListenState): void {
   writePrivateFile(listenStatePath(), JSON.stringify(state, null, 2));
 }
 
+/**
+ * Add webhook ids to the session record for this key.
+ *
+ * Merges rather than replaces: ids already recorded belong to webhooks that are
+ * still registered (a previous run that crashed, or whose cleanup the user
+ * declined), and overwriting them would lose the only reference to them.
+ */
 export function recordListenSession(apiKey: string, entry: ListenStateEntry): void {
   const state = readState();
-  state[hashKey(apiKey)] = entry;
+  const existing = state[hashKey(apiKey)]?.webhookIds ?? [];
+  state[hashKey(apiKey)] = {
+    ...entry,
+    webhookIds: [...new Set([...existing, ...entry.webhookIds])],
+  };
   writeState(state);
 }
 
-export function clearListenSession(apiKey: string): void {
+/**
+ * Drop webhook ids from the session record once they are known to be gone,
+ * removing the record entirely when nothing is left in it.
+ */
+export function forgetListenWebhooks(apiKey: string, ids: number[]): void {
   const state = readState();
-  delete state[hashKey(apiKey)];
+  const entry = state[hashKey(apiKey)];
+  if (!entry) return;
+  const remaining = entry.webhookIds.filter((id) => !ids.includes(id));
+  if (remaining.length) {
+    state[hashKey(apiKey)] = { ...entry, webhookIds: remaining };
+  } else {
+    delete state[hashKey(apiKey)];
+  }
   writeState(state);
 }
 
@@ -73,27 +95,56 @@ export interface ListenOptions {
  *
  * The array is caller-owned on purpose: if a later call fails, the caller still
  * holds the ids created before the failure and can clean them up. Returning
- * them would lose exactly the ids that matter.
+ * them would lose exactly the ids that matter. `onCreated` runs as soon as each
+ * webhook exists, so the caller can persist it before the next request.
  */
-export async function registerWebhooks(opts: ListenOptions, ids: number[]): Promise<number[]> {
+export async function registerWebhooks(
+  opts: ListenOptions,
+  ids: number[],
+  onCreated?: (id: number) => void,
+): Promise<number[]> {
   for (const event of opts.events) {
     const result = await opts.client.Webhooks.create({ url: opts.publicUrl, event });
     ids.push(result.NewWebhookID);
+    onCreated?.(result.NewWebhookID);
     opts.log(chalk.dim(`  + ${event} (id ${result.NewWebhookID})`));
   }
   return ids;
 }
 
-export async function deleteWebhooks(client: SendLayer, ids: number[], log: (msg: string) => void): Promise<void> {
+/**
+ * Delete each webhook, carrying on past failures.
+ *
+ * `onDeleted` runs as soon as each one is gone, so a cleanup cut short by a
+ * timeout still records the progress it made.
+ *
+ * @returns the ids that could not be deleted and are presumably still live
+ */
+export async function deleteWebhooks(
+  client: SendLayer,
+  ids: number[],
+  log: (msg: string) => void,
+  onDeleted?: (id: number) => void,
+): Promise<number[]> {
+  const failed: number[] = [];
   for (const id of ids) {
     try {
       await client.Webhooks.delete(id);
       log(chalk.dim(`  - removed webhook ${id}`));
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      log(chalk.yellow(`  ! failed to remove webhook ${id}: ${msg}`));
+      // Already gone (e.g. removed with 'webhooks delete'): that's the outcome
+      // we wanted, and keeping the id would offer it for cleanup forever.
+      if (!(err instanceof SendLayerAPIError && err.statusCode === 404)) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log(chalk.yellow(`  ! failed to remove webhook ${id}: ${msg}`));
+        failed.push(id);
+        continue;
+      }
+      log(chalk.dim(`  - webhook ${id} was already removed`));
     }
+    onDeleted?.(id);
   }
+  return failed;
 }
 
 export interface ListenServer {

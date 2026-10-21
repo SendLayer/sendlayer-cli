@@ -5,9 +5,10 @@ import * as net from 'node:net';
 
 import { useTempConfigHome } from '../helpers/config-home';
 import { listenStatePath } from '../../src/lib/auth';
+import { SendLayerAPIError } from 'sendlayer';
 import {
-  clearListenSession,
   deleteWebhooks,
+  forgetListenWebhooks,
   getListenSession,
   recordListenSession,
   registerWebhooks,
@@ -54,7 +55,7 @@ function fakeClient(webhooks: Record<string, unknown>): ListenOptions['client'] 
 }
 
 describe('listen session state', () => {
-  it('round-trips an entry and clears it', () => {
+  it('round-trips an entry and clears it once every id is forgotten', () => {
     const entry = {
       webhookIds: [1, 2, 3],
       publicUrl: 'https://example.ngrok.io',
@@ -64,8 +65,29 @@ describe('listen session state', () => {
     recordListenSession('key-a', entry);
     expect(getListenSession('key-a')).toEqual(entry);
 
-    clearListenSession('key-a');
+    forgetListenWebhooks('key-a', [1, 3]);
+    expect(getListenSession('key-a')?.webhookIds).toEqual([2]);
+
+    forgetListenWebhooks('key-a', [2]);
     expect(getListenSession('key-a')).toBeUndefined();
+  });
+
+  it('merges new ids into an existing entry instead of replacing it', () => {
+    // Regression: declining the stale-webhook prompt and then registering new
+    // webhooks overwrote the slot, so the stale ids were never offered again.
+    recordListenSession('key-a', { webhookIds: [1, 2], publicUrl: 'https://old.ngrok.io', startedAt: 'then' });
+    recordListenSession('key-a', { webhookIds: [2, 3], publicUrl: 'https://new.ngrok.io', startedAt: 'now' });
+
+    expect(getListenSession('key-a')).toEqual({
+      webhookIds: [1, 2, 3],
+      publicUrl: 'https://new.ngrok.io',
+      startedAt: 'now',
+    });
+  });
+
+  it('ignores forgetting ids for a key with no record', () => {
+    forgetListenWebhooks('never-seen', [1]);
+    expect(getListenSession('never-seen')).toBeUndefined();
   });
 
   it('keeps separate slots per API key', () => {
@@ -85,7 +107,7 @@ describe('listen session state', () => {
     expect(getListenSession('staging-key')?.webhookIds).toEqual([10]);
     expect(getListenSession('prod-key')?.webhookIds).toEqual([20]);
 
-    clearListenSession('staging-key');
+    forgetListenWebhooks('staging-key', [10]);
     expect(getListenSession('staging-key')).toBeUndefined();
     expect(getListenSession('prod-key')?.webhookIds).toEqual([20]);
   });
@@ -143,6 +165,26 @@ describe('registerWebhooks', () => {
 
     expect(ids).toEqual([1, 2]);
   });
+
+  it('reports each id as soon as it is created', async () => {
+    // The caller persists ids from this callback, so a Ctrl+C mid-registration
+    // still leaves every created webhook on disk.
+    const seen: number[][] = [];
+    const ids: number[] = [];
+    const create = vi
+      .fn()
+      .mockResolvedValueOnce({ NewWebhookID: 1 })
+      .mockImplementationOnce(async () => {
+        expect(seen).toEqual([[1]]);
+        throw new Error('interrupted');
+      });
+
+    await expect(
+      registerWebhooks(listenOptions({ client: fakeClient({ create }) }), ids, () => seen.push([...ids])),
+    ).rejects.toThrow('interrupted');
+
+    expect(seen).toEqual([[1]]);
+  });
 });
 
 describe('deleteWebhooks', () => {
@@ -156,18 +198,55 @@ describe('deleteWebhooks', () => {
     expect(logs.join('\n')).toContain('removed webhook 7');
   });
 
-  it('keeps going after a failed delete', async () => {
+  it('keeps going after a failed delete and returns the ids that failed', async () => {
+    // Regression: failures were only logged, so callers treated cleanup as
+    // done and dropped the session record while the webhooks stayed live.
     const remove = vi
       .fn()
-      .mockRejectedValueOnce(new Error('gone'))
+      .mockRejectedValueOnce(new Error('service unavailable'))
       .mockResolvedValueOnce(undefined);
     const logs: string[] = [];
+    const deleted: number[] = [];
 
-    await deleteWebhooks(fakeClient({ delete: remove }), [7, 8], (m) => logs.push(m));
+    const failed = await deleteWebhooks(
+      fakeClient({ delete: remove }),
+      [7, 8],
+      (m) => logs.push(m),
+      (id) => deleted.push(id),
+    );
 
+    expect(failed).toEqual([7]);
+    expect(deleted).toEqual([8]);
     expect(remove).toHaveBeenCalledTimes(2);
     expect(logs.join('\n')).toContain('failed to remove webhook 7');
     expect(logs.join('\n')).toContain('removed webhook 8');
+  });
+
+  it('counts a 404 as already deleted', async () => {
+    const remove = vi.fn().mockRejectedValue(new SendLayerAPIError('not found', 404, {}));
+    const deleted: number[] = [];
+
+    const failed = await deleteWebhooks(fakeClient({ delete: remove }), [7], () => {}, (id) => deleted.push(id));
+
+    expect(failed).toEqual([]);
+    expect(deleted).toEqual([7]);
+  });
+
+  it('keeps a failed id in the session record when wired to forgetListenWebhooks', async () => {
+    // The shape listen.ts uses: only ids that are really gone leave the record.
+    recordListenSession('key-a', { webhookIds: [7, 8, 9], publicUrl: 'u', startedAt: 'now' });
+    const remove = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new SendLayerAPIError('unauthorized', 401, {}))
+      .mockResolvedValueOnce(undefined);
+
+    const failed = await deleteWebhooks(fakeClient({ delete: remove }), [7, 8, 9], () => {}, (id) =>
+      forgetListenWebhooks('key-a', [id]),
+    );
+
+    expect(failed).toEqual([8]);
+    expect(getListenSession('key-a')?.webhookIds).toEqual([8]);
   });
 });
 

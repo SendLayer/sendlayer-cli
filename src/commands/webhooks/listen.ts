@@ -4,8 +4,8 @@ import prompts from 'prompts';
 import { BaseCommand } from '../../base-command';
 import { ExitCodes, handleError } from '../../lib/errors';
 import {
-  clearListenSession,
   deleteWebhooks,
+  forgetListenWebhooks,
   getListenSession,
   recordListenSession,
   registerWebhooks,
@@ -67,6 +67,9 @@ export default class WebhooksListen extends BaseCommand<typeof WebhooksListen> {
     const apiKey = this.resolveAuth().apiKey;
     const client = this.getClient();
 
+    const log = (m: string): void => this.log(m);
+    const forget = (id: number): void => forgetListenWebhooks(apiKey, [id]);
+
     // Recovery: stale webhooks from a previous crashed run?
     const stale = getListenSession(apiKey);
     if (stale && !flags['skip-cleanup-prompt']) {
@@ -78,8 +81,12 @@ export default class WebhooksListen extends BaseCommand<typeof WebhooksListen> {
         initial: true,
       });
       if (proceed) {
-        await deleteWebhooks(client, stale.webhookIds, (m) => this.log(m));
-        clearListenSession(apiKey);
+        const failed = await deleteWebhooks(client, stale.webhookIds, log, forget);
+        if (failed.length) {
+          this.log(chalk.yellow(`! ${failed.length} stale webhook(s) could not be removed; the next run will offer them again.`));
+        }
+      } else {
+        this.log(chalk.dim('  Kept them; the next run will offer them again.'));
       }
     }
 
@@ -93,46 +100,7 @@ export default class WebhooksListen extends BaseCommand<typeof WebhooksListen> {
     // Owned here and filled in by registerWebhooks, so a failure partway
     // through still leaves us holding the ids created so far.
     const webhookIds: number[] = [];
-    try {
-      this.log(chalk.bold('Registering webhooks...'));
-      await registerWebhooks(
-        {
-          client,
-          apiKey,
-          publicUrl: flags['public-url'],
-          port: flags.port,
-          forwardTo: flags['forward-to'],
-          events,
-          log: (m) => this.log(m),
-        },
-        webhookIds,
-      );
-      recordListenSession(apiKey, {
-        webhookIds,
-        publicUrl: flags['public-url'],
-        startedAt: new Date().toISOString(),
-      });
-    } catch (err) {
-      // best-effort cleanup of any partially-registered ids
-      if (webhookIds.length) await deleteWebhooks(client, webhookIds, (m) => this.log(m));
-      return handleError(flags, err);
-    }
-
-    let server: ListenServer;
-    try {
-      server = await startListenServer({
-        port: flags.port,
-        forwardTo: flags['forward-to'],
-        log: (m) => this.log(m),
-      });
-    } catch (err) {
-      // The webhooks are live but nothing is listening — take them back down.
-      await deleteWebhooks(client, webhookIds, (m) => this.log(m));
-      clearListenSession(apiKey);
-      return handleError(flags, err);
-    }
-
-    this.log(chalk.green(`✓ Listening. Press Ctrl+C to stop.`));
+    let server: ListenServer | undefined;
 
     let shuttingDown = false;
     const shutdown = async (signal: string) => {
@@ -146,25 +114,77 @@ export default class WebhooksListen extends BaseCommand<typeof WebhooksListen> {
       this.log('');
       this.log(chalk.bold(`Received ${signal}. Cleaning up... (Ctrl+C again to skip)`));
       // A request still in flight shouldn't hold shutdown open for long.
-      await withTimeout(server.close(), CLEANUP_TIMEOUT_MS);
+      if (server) await withTimeout(server.close(), CLEANUP_TIMEOUT_MS);
+      // Each webhook leaves the session record as it is deleted, so whatever
+      // is still live when this returns, fails or times out stays recorded
+      // for the next run to offer.
+      let failed: number[] = [];
       const cleaned = await withTimeout(
-        deleteWebhooks(client, webhookIds, (m) => this.log(m)),
+        deleteWebhooks(client, webhookIds, log, forget).then((f) => {
+          failed = f;
+        }),
         CLEANUP_TIMEOUT_MS,
       );
-      if (cleaned) {
-        // Only drop the session record once the webhooks are really gone,
-        // otherwise the next run can't offer to clean them up.
-        clearListenSession(apiKey);
+      if (cleaned && !failed.length) {
         this.log(chalk.green('✓ Done.'));
         process.exit(0);
       }
-      this.log(chalk.yellow(`! Cleanup timed out after ${CLEANUP_TIMEOUT_MS / 1000}s.`));
+      this.log(
+        chalk.yellow(
+          cleaned
+            ? `! ${failed.length} webhook(s) could not be removed.`
+            : `! Cleanup timed out after ${CLEANUP_TIMEOUT_MS / 1000}s.`,
+        ),
+      );
       this.log(chalk.dim('  The next run will offer to remove any webhooks left behind.'));
       process.exit(ExitCodes.INTERRUPTED);
     };
 
+    // Installed before registering: a Ctrl+C during "Registering webhooks..."
+    // would otherwise kill the process with the webhooks created so far still live.
     process.on('SIGINT', () => shutdown('SIGINT'));
     process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+    try {
+      this.log(chalk.bold('Registering webhooks...'));
+      await registerWebhooks(
+        {
+          client,
+          apiKey,
+          publicUrl: flags['public-url'],
+          port: flags.port,
+          forwardTo: flags['forward-to'],
+          events,
+          log,
+        },
+        webhookIds,
+        // Record each id the moment it exists, not once all are registered.
+        (id) =>
+          recordListenSession(apiKey, {
+            webhookIds: [id],
+            publicUrl: flags['public-url'],
+            startedAt: new Date().toISOString(),
+          }),
+      );
+    } catch (err) {
+      // best-effort cleanup of any partially-registered ids
+      if (webhookIds.length) await deleteWebhooks(client, webhookIds, log, forget);
+      return handleError(flags, err);
+    }
+
+    try {
+      server = await startListenServer({
+        port: flags.port,
+        forwardTo: flags['forward-to'],
+        log,
+      });
+    } catch (err) {
+      // The webhooks are live but nothing is listening — take them back down.
+      await deleteWebhooks(client, webhookIds, log, forget);
+      return handleError(flags, err);
+    }
+
+    this.log(chalk.green(`✓ Listening. Press Ctrl+C to stop.`));
 
     // Keep the process alive while the server runs.
     await new Promise<void>(() => {
