@@ -232,7 +232,7 @@ npm test            # vitest
 npm run build       # tsc -> dist/ + oclif manifest
 ```
 
-Build native binaries (requires [Bun](https://bun.sh)):
+Build native binaries with [Bun](https://bun.sh). `npm install` provides the pinned version:
 
 ```sh
 npm run compile:binaries

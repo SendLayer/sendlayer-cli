@@ -53,9 +53,8 @@ jobs:
         with:
           node-version: '20'
           cache: npm
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version: latest
+      # No setup-bun: build-binaries.sh uses the bun devDependency, so the
+      # version comes from package-lock.json like every other build tool.
       - run: npm ci
       - run: npm run build
       - run: bash scripts/build-binaries.sh 0.0.0-ci

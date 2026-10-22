@@ -12,17 +12,18 @@ OUT_DIR="dist-bin"
 # which cannot work inside a compiled binary. See bin/binary.js for details.
 ENTRY="bin/binary.js"
 
-BUN="bun"
-if ! command -v bun >/dev/null 2>&1; then
-  # Fall back to the devDependency so local builds work without a global install.
-  if [ -x "./node_modules/.bin/bun" ]; then
-    BUN="./node_modules/.bin/bun"
-  else
-    echo "Bun is required. Install: curl -fsSL https://bun.sh/install | bash" >&2
-    echo "   ...or run: npm install" >&2
-    exit 1
-  fi
+# Prefer the devDependency: its version is pinned by package-lock.json, so
+# release builds are reproducible. A global bun is only a fallback.
+if [ -x "./node_modules/.bin/bun" ]; then
+  BUN="./node_modules/.bin/bun"
+elif command -v bun >/dev/null 2>&1; then
+  BUN="bun"
+else
+  echo "Bun is required. Run: npm install" >&2
+  echo "   ...or install it globally: curl -fsSL https://bun.sh/install | bash" >&2
+  exit 1
 fi
+echo "Using bun $("$BUN" --version)"
 
 if [ ! -f "dist/index.js" ] || [ ! -f "oclif.manifest.json" ]; then
   echo "dist/index.js and oclif.manifest.json are required. Run 'npm run build' first." >&2

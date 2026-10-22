@@ -22,9 +22,8 @@ jobs:
           node-version: '20'
           cache: npm
           registry-url: 'https://registry.npmjs.org'
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version: latest
+      # No setup-bun: build-binaries.sh uses the bun devDependency, so the
+      # version comes from package-lock.json like every other build tool.
       - id: meta
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
       - run: npm ci
