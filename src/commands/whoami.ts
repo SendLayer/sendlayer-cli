@@ -9,8 +9,10 @@ export default class Whoami extends Command {
   static examples = ['<%= config.bin %> whoami', '<%= config.bin %> whoami --json'];
 
   static flags = {
-    'api-key': Flags.string({ description: 'API key override', env: 'SENDLAYER_API_KEY' }),
-    profile: Flags.string({ description: 'Profile to inspect', default: 'default' }),
+    // Neither flag has an `env` or `default`: either would hide where the key
+    // really came from, which is what this command exists to report.
+    'api-key': Flags.string({ description: 'API key override', env: 'SENDLAYER_API_KEY', hidden: true }),
+    profile: Flags.string({ description: 'Profile to inspect (default: the default profile)' }),
     json: Flags.boolean({ description: 'Output as JSON' }),
   };
 

@@ -4,6 +4,7 @@ import { Config } from '@oclif/core';
 import * as path from 'node:path';
 
 import { useTempConfigHome } from '../helpers/config-home';
+import { saveApiKey } from '../../src/lib/auth';
 import { ExitCodes } from '../../src/lib/errors';
 
 const { createMock, getMock, deleteMock } = vi.hoisted(() => ({
@@ -150,6 +151,21 @@ describe('webhooks delete', () => {
 
     expect(exitCodeOf(error)).toBe(ExitCodes.USAGE);
     expect(deleteMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('stored credentials', () => {
+  it('uses the default profile when --profile is omitted', async () => {
+    // Regression: `login --profile work` then `webhooks list` exited with
+    // AUTH_MISSING, because --profile defaulted to 'default'.
+    delete process.env.SENDLAYER_API_KEY;
+    saveApiKey('sl_work_key', 'work');
+    getMock.mockResolvedValue([]);
+
+    const { error } = await captureOutput(() => WebhooksList.run(['--json'], config));
+
+    expect(error).toBeUndefined();
+    expect(getMock).toHaveBeenCalledTimes(1);
   });
 });
 

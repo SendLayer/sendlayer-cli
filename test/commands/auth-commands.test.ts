@@ -144,6 +144,41 @@ describe('whoami', () => {
   });
 });
 
+describe('default profile', () => {
+  // Regression: --profile defaulted to 'default', so the stored defaultProfile
+  // was never consulted and both of these ended in AUTH_MISSING.
+  it('uses the profile saved by login --profile when --profile is omitted', async () => {
+    await captureConsole(() => Login.run(['--key', 'sl_work_abcd1234', '--no-validate', '--profile', 'work'], config));
+
+    const { stdout, error } = await captureConsole(() => Whoami.run([], config));
+
+    expect(error).toBeUndefined();
+    expect(JSON.parse(stdout)).toMatchObject({ authenticated: true, source: 'file', profile: 'work', defaultProfile: 'work' });
+  });
+
+  it('falls back to the remaining profile after logging out of the default one', async () => {
+    saveApiKey('sl_default_abcd1234', 'default');
+    saveApiKey('sl_staging_abcd1234', 'staging');
+
+    await captureConsole(() => Logout.run([], config));
+    const { stdout, error } = await captureConsole(() => Whoami.run([], config));
+
+    expect(error).toBeUndefined();
+    expect(JSON.parse(stdout)).toMatchObject({ authenticated: true, profile: 'staging', defaultProfile: 'staging' });
+  });
+
+  it('login and logout without --profile act on the default profile', async () => {
+    saveApiKey('sl_work_abcd1234', 'work');
+
+    const { stdout: saved } = await captureConsole(() => Login.run(['--key', 'sl_work_new_5678', '--no-validate'], config));
+    expect(JSON.parse(saved)).toMatchObject({ saved: true, profile: 'work' });
+    expect(Object.keys(readCredentials().profiles)).toEqual(['work']);
+
+    const { stdout: removed } = await captureConsole(() => Logout.run([], config));
+    expect(JSON.parse(removed)).toMatchObject({ removed: true, profile: 'work' });
+  });
+});
+
 describe('exit codes for missing credentials', () => {
   it('whoami --json reports the auth-missing code instead of success', async () => {
     // Regression: the JSON path returned before the exit call, so a script

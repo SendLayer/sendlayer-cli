@@ -4,6 +4,7 @@ import * as path from 'node:path';
 
 import { useTempConfigHome } from '../helpers/config-home';
 import {
+  activeProfile,
   configDir,
   credentialsPath,
   saveApiKey,
@@ -91,6 +92,45 @@ describe('deleteProfile', () => {
     expect(deleteProfile('default')).toBe(true);
     expect(deleteProfile('default')).toBe(false);
     expect(readCredentials().profiles.default).toBeUndefined();
+  });
+
+  it('moves the default to a remaining profile, which resolveApiKey then uses', () => {
+    saveApiKey('default-key', 'default');
+    saveApiKey('staging-key', 'staging');
+
+    deleteProfile('default');
+
+    expect(readCredentials().defaultProfile).toBe('staging');
+    expect(resolveApiKey({})).toMatchObject({ apiKey: 'staging-key', profile: 'staging' });
+  });
+});
+
+describe('default profile', () => {
+  it('is set to the first profile saved', () => {
+    // Regression: the empty file pre-set defaultProfile to 'default', so this
+    // never fired and a lone non-default profile was unreachable.
+    saveApiKey('work-key', 'work');
+    saveApiKey('other-key', 'other');
+
+    expect(readCredentials().defaultProfile).toBe('work');
+    expect(resolveApiKey({})).toMatchObject({ apiKey: 'work-key', source: 'file', profile: 'work' });
+  });
+
+  it('repairs a default that points at a missing profile', () => {
+    // The shape older versions left behind after `login --profile work`.
+    fs.mkdirSync(path.dirname(credentialsPath()), { recursive: true });
+    fs.writeFileSync(credentialsPath(), JSON.stringify({ defaultProfile: 'default', profiles: {} }));
+
+    saveApiKey('work-key', 'work');
+
+    expect(readCredentials().defaultProfile).toBe('work');
+  });
+
+  it('activeProfile prefers the explicit name, then the stored default', () => {
+    expect(activeProfile()).toBe('default');
+    saveApiKey('work-key', 'work');
+    expect(activeProfile()).toBe('work');
+    expect(activeProfile('staging')).toBe('staging');
   });
 });
 

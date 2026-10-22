@@ -42,7 +42,8 @@ function ensureConfigDir(): void {
 }
 
 function emptyFile(): CredentialsFile {
-  return { defaultProfile: 'default', profiles: {} };
+  // No defaultProfile yet: saveApiKey sets it to whichever profile is saved first.
+  return { profiles: {} };
 }
 
 export function readCredentials(): CredentialsFile {
@@ -80,17 +81,27 @@ export function writeCredentials(data: CredentialsFile): void {
   writePrivateFile(credentialsPath(), JSON.stringify(data, null, 2));
 }
 
-export function saveApiKey(apiKey: string, profile = 'default'): void {
+/**
+ * The profile a command uses when --profile isn't given: the stored default,
+ * or 'default' before anything has been saved.
+ */
+export function activeProfile(profile?: string): string {
+  return profile || readCredentials().defaultProfile || 'default';
+}
+
+export function saveApiKey(apiKey: string, profile = activeProfile()): void {
   const data = readCredentials();
   data.profiles[profile] = {
     apiKey,
     createdAt: new Date().toISOString(),
   };
-  if (!data.defaultProfile) data.defaultProfile = profile;
+  // Also repairs a default left pointing at a profile that doesn't exist, which
+  // older versions wrote by pre-setting 'default' before any profile was saved.
+  if (!data.defaultProfile || !data.profiles[data.defaultProfile]) data.defaultProfile = profile;
   writeCredentials(data);
 }
 
-export function deleteProfile(profile = 'default'): boolean {
+export function deleteProfile(profile = activeProfile()): boolean {
   const data = readCredentials();
   if (!data.profiles[profile]) return false;
   delete data.profiles[profile];

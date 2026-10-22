@@ -1,7 +1,7 @@
 import { Command, Errors, Flags } from '@oclif/core';
 import chalk from 'chalk';
 import prompts from 'prompts';
-import { saveApiKey, credentialsPath, maskApiKey } from '../lib/auth';
+import { activeProfile, saveApiKey, credentialsPath, maskApiKey } from '../lib/auth';
 import { getClient } from '../lib/client';
 import { describeError, exitWith, ExitCodes, failWith, handleError } from '../lib/errors';
 import { drainOutput, isJsonMode } from '../lib/output';
@@ -20,8 +20,7 @@ export default class Login extends Command {
       char: 'k',
     }),
     profile: Flags.string({
-      description: 'Profile name to save under',
-      default: 'default',
+      description: 'Profile name to save under (default: the default profile)',
     }),
     'no-validate': Flags.boolean({
       description: 'Skip API validation',
@@ -72,14 +71,15 @@ export default class Login extends Command {
       }
     }
 
-    saveApiKey(apiKey, flags.profile);
+    const profile = activeProfile(flags.profile);
+    saveApiKey(apiKey, profile);
 
     if (isJsonMode(flags)) {
-      this.log(JSON.stringify({ saved: true, profile: flags.profile, path: credentialsPath() }, null, 2));
+      this.log(JSON.stringify({ saved: true, profile, path: credentialsPath() }, null, 2));
       return;
     }
 
-    this.log(chalk.green('✓') + ` API key saved to profile ${chalk.bold(flags.profile)}`);
+    this.log(chalk.green('✓') + ` API key saved to profile ${chalk.bold(profile)}`);
     this.log(chalk.dim(`  Key: ${maskApiKey(apiKey)}`));
     this.log(chalk.dim(`  Path: ${credentialsPath()}`));
   }

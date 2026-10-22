@@ -198,7 +198,9 @@ Credentials are stored at:
 - macOS / Linux: `$XDG_CONFIG_HOME/sendlayer/credentials.json` (default `~/.config/sendlayer/credentials.json`)
 - Windows: `%APPDATA%\sendlayer\credentials.json`
 
-File mode is `0600`. Multiple profiles supported via `--profile <name>`.
+File mode is `0600`. Multiple profiles supported via `--profile <name>`. The first
+profile you save becomes the default, and any command run without `--profile` uses
+it; `sendlayer whoami` shows which one is active.
 
 ## Development
 

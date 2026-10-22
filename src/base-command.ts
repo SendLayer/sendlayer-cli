@@ -18,8 +18,8 @@ export abstract class BaseCommand<T extends typeof Command> extends Command {
       helpGroup: 'GLOBAL',
     }),
     profile: Flags.string({
-      description: 'Named credentials profile',
-      default: 'default',
+      // No default: an omitted --profile falls back to the stored default profile.
+      description: 'Named credentials profile (default: the default profile)',
       helpGroup: 'GLOBAL',
     }),
     json: Flags.boolean({
