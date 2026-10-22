@@ -11,7 +11,7 @@ export default class Whoami extends Command {
   static flags = {
     // Neither flag has an `env` or `default`: either would hide where the key
     // really came from, which is what this command exists to report.
-    'api-key': Flags.string({ description: 'API key override', env: 'SENDLAYER_API_KEY', hidden: true }),
+    'api-key': Flags.string({ description: 'API key override' }),
     profile: Flags.string({ description: 'Profile to inspect (default: the default profile)' }),
     json: Flags.boolean({ description: 'Output as JSON' }),
   };

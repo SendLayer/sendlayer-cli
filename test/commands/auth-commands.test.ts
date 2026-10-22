@@ -119,9 +119,9 @@ describe('whoami', () => {
     const { stdout } = await captureConsole(() => Whoami.run([], config));
 
     const payload = JSON.parse(stdout);
-    // The --api-key flag declares env: 'SENDLAYER_API_KEY', so oclif fills the
-    // flag in from the environment and resolveApiKey sees it as a flag.
-    expect(payload).toMatchObject({ authenticated: true, source: 'flag' });
+    // Regression: --api-key declared env: 'SENDLAYER_API_KEY', so oclif filled
+    // the flag from the environment and the key was reported as source: flag.
+    expect(payload).toMatchObject({ authenticated: true, source: 'env' });
     expect(payload.key).not.toContain('abcdefgh');
   });
 

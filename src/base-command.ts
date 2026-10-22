@@ -13,8 +13,9 @@ export abstract class BaseCommand<T extends typeof Command> extends Command {
 
   static baseFlags = {
     'api-key': Flags.string({
+      // No `env` here: oclif would fill the flag from SENDLAYER_API_KEY and the
+      // key would be reported as coming from the flag. resolveApiKey reads it.
       description: 'SendLayer API key (overrides env and config)',
-      env: 'SENDLAYER_API_KEY',
       helpGroup: 'GLOBAL',
     }),
     profile: Flags.string({
