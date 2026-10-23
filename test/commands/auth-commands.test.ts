@@ -167,6 +167,31 @@ describe('default profile', () => {
     expect(JSON.parse(stdout)).toMatchObject({ authenticated: true, profile: 'staging', defaultProfile: 'staging' });
   });
 
+  it('tells the user when logging out of the default promotes another profile', async () => {
+    saveApiKey('sl_prod_abcd1234', 'prod');
+    saveApiKey('sl_staging_abcd1234', 'staging');
+
+    // The promotion is silent otherwise: the next command without --profile
+    // runs against a different account than the one just logged out of.
+    const { stdout: human } = await asTty(() => captureConsole(() => Logout.run([], config)));
+    expect(human).toMatch(/Removed profile prod/);
+    expect(human).toMatch(/Default profile is now staging/);
+
+    saveApiKey('sl_prod_abcd1234', 'prod');
+    const { stdout: json } = await captureConsole(() => Logout.run(['--profile', 'staging'], config));
+    expect(JSON.parse(json)).toMatchObject({ removed: true, profile: 'staging', defaultProfile: 'prod' });
+  });
+
+  it('does not announce a new default when a non-default profile is removed', async () => {
+    saveApiKey('sl_prod_abcd1234', 'prod');
+    saveApiKey('sl_staging_abcd1234', 'staging');
+
+    const { stdout } = await asTty(() => captureConsole(() => Logout.run(['--profile', 'staging'], config)));
+
+    expect(stdout).toMatch(/Removed profile staging/);
+    expect(stdout).not.toMatch(/Default profile is now/);
+  });
+
   it('login and logout without --profile act on the default profile', async () => {
     saveApiKey('sl_work_abcd1234', 'work');
 
