@@ -1,0 +1,89 @@
+{
+  "name": "sendlayer-cli",
+  "version": "0.1.0",
+  "description": "Command-line interface for the SendLayer transactional email API",
+  "author": "SendLayer <support@sendlayer.com>",
+  "license": "MIT",
+  "homepage": "https://github.com/SendLayer/sendlayer-cli",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SendLayer/sendlayer-cli.git"
+  },
+  "bugs": "https://github.com/SendLayer/sendlayer-cli/issues",
+  "keywords": [
+    "sendlayer",
+    "email",
+    "transactional-email",
+    "cli",
+    "smtp",
+    "webhooks"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "sendlayer": "./bin/run.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "oclif.manifest.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "build": "rm -rf dist tsconfig.tsbuildinfo && tsc",
+    "postbuild": "oclif manifest",
+    "dev": "./bin/dev.js",
+    "start": "./bin/run.js",
+    "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\"",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "compile:binaries": "bash scripts/build-binaries.sh",
+    "homebrew:formula": "bash scripts/gen-homebrew-formula.sh",
+    "verify:binary": "bash scripts/verify-binary.sh",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@oclif/core": "^4.0.30",
+    "chalk": "^4.1.2",
+    "prompts": "^2.4.2",
+    "sendlayer": "^1.1.0"
+  },
+  "devDependencies": {
+    "@oclif/test": "^4.1.20",
+    "@types/node": "^20.11.24",
+    "@types/prompts": "^2.4.9",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "bun": "^1.3.14",
+    "eslint": "^8.57.0",
+    "oclif": "^4.15.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0"
+  },
+  "oclif": {
+    "bin": "sendlayer",
+    "dirname": "sendlayer",
+    "commands": "./dist/commands",
+    "topicSeparator": " ",
+    "topics": {
+      "emails": {
+        "description": "Send and manage emails"
+      },
+      "webhooks": {
+        "description": "Manage webhooks and stream events"
+      },
+      "events": {
+        "description": "List delivery and engagement events"
+      }
+    },
+    "hooks": {
+      "prerun": "./dist/hooks/prerun-auth"
+    }
+  }
+}
