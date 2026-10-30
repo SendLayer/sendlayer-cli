@@ -68,11 +68,11 @@ jobs:
       contents: write # create the GitHub release and upload its assets
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/download-artifact@097829e880806b0863828e844a429538e2146d36 # v4.1.1
+      - uses: actions/download-artifact@6b208ae046db98c579e8a3aa621ab581ff575935 # v4.1.1
         with:
           name: dist-bin
           path: dist-bin
-      - uses: softprops/action-gh-release@320377605023b2a1095615005459b30485295232 # v2.1.0
+      - uses: softprops/action-gh-release@01570a1f39cb168c169c802c3bceb9e93fb10974 # v2.1.0
         with:
           files: |
             dist-bin/sendlayer_*.tar.gz
@@ -126,7 +126,7 @@ jobs:
   #         repository: SendLayer/homebrew-sendlayer
   #         token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
   #         path: tap
-  #     - uses: actions/download-artifact@097829e880806b0863828e844a429538e2146d36 # v4.1.1
+  #     - uses: actions/download-artifact@6b208ae046db98c579e8a3aa621ab581ff575935 # v4.1.1
   #       with:
   #         name: dist-bin
   #         path: dist-bin
