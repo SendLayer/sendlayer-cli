@@ -1,4 +1,4 @@
-import { format } from 'node:util';
+import { format, stripVTControlCharacters } from 'node:util';
 import { vi } from 'vitest';
 
 export interface Captured<T> {
@@ -16,10 +16,16 @@ export interface Captured<T> {
  * intercepts the console before the patched stream method is reached. Commands
  * here use both (emit() writes to the stream directly, this.log doesn't), so
  * both paths are captured.
+ *
+ * ANSI colour codes are stripped. chalk enables colour when the test run itself
+ * is attached to a terminal, and `Removed profile ${chalk.bold(name)}` then no
+ * longer matches /Removed profile name/ — so assertions held in CI but failed
+ * for anyone running `npm test` locally.
  */
 export async function captureConsole<T>(fn: () => Promise<T>): Promise<Captured<T>> {
   const stdout: string[] = [];
   const stderr: string[] = [];
+  const joined = (chunks: string[]) => stripVTControlCharacters(chunks.join(''));
 
   const logSpy = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
     stdout.push(format(...args) + '\n');
@@ -40,9 +46,9 @@ export async function captureConsole<T>(fn: () => Promise<T>): Promise<Captured<
 
   try {
     const result = await fn();
-    return { result, stdout: stdout.join(''), stderr: stderr.join('') };
+    return { result, stdout: joined(stdout), stderr: joined(stderr) };
   } catch (error) {
-    return { error, stdout: stdout.join(''), stderr: stderr.join('') };
+    return { error, stdout: joined(stdout), stderr: joined(stderr) };
   } finally {
     process.stdout.write = originalOut;
     process.stderr.write = originalErr;
