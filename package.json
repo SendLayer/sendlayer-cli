@@ -7,7 +7,7 @@
   "homepage": "https://github.com/SendLayer/sendlayer-cli",
   "repository": {
     "type": "git",
-    "url": "https://github.com/SendLayer/sendlayer-cli.git"
+    "url": "git+https://github.com/SendLayer/sendlayer-cli.git"
   },
   "bugs": "https://github.com/SendLayer/sendlayer-cli/issues",
   "keywords": [
@@ -21,7 +21,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "sendlayer": "./bin/run.js"
+    "sendlayer": "bin/run.js"
   },
   "files": [
     "bin",
@@ -85,5 +85,8 @@
     "hooks": {
       "prerun": "./dist/hooks/prerun-auth"
     }
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
