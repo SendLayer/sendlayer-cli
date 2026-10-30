@@ -64,8 +64,11 @@ describe('login', () => {
   });
 
   it('reports a rejected key with the auth exit code', async () => {
-    const { SendLayerAPIError } = await import('sendlayer');
-    getMock.mockRejectedValue(new SendLayerAPIError('nope', 401, {}));
+    // What sendlayer 1.1 actually raises for a 401. It is not a
+    // SendLayerAPIError, which is how this slipped through as "Could not
+    // validate key ... --no-validate".
+    const { SendLayerAuthenticationError } = await import('sendlayer');
+    getMock.mockRejectedValue(new SendLayerAuthenticationError('Invalid API key', 401, {}));
 
     const { stderr, error } = await captureConsole(() =>
       Login.run(['--key', 'sl_live_abcd1234'], config),
