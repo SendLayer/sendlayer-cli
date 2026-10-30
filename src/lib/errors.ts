@@ -1,5 +1,5 @@
 import { Errors } from '@oclif/core';
-import { SendLayerAPIError, SendLayerError } from 'sendlayer';
+import { SendLayerAuthenticationError, SendLayerError, SendLayerValidationError } from 'sendlayer';
 import { emitError } from './output';
 
 export const ExitCodes = {
@@ -34,16 +34,28 @@ export function describeError(err: unknown): CliErrorPayload {
   if (isUsageError(err)) {
     return { message: err.message, code: 'USAGE', exitCode: ExitCodes.USAGE };
   }
-  if (err instanceof SendLayerAPIError) {
+  // Since sendlayer 1.1 most HTTP failures arrive as sibling subclasses of
+  // SendLayerError (Authentication, NotFound, RateLimit, InternalServer), not
+  // as SendLayerAPIError, so classify by type and statusCode rather than by
+  // SendLayerAPIError alone.
+  if (err instanceof SendLayerValidationError) {
+    return { message: err.message, code: err.name, exitCode: ExitCodes.VALIDATION };
+  }
+  if (err instanceof SendLayerError && err.statusCode !== undefined) {
     return {
       message: err.message,
       code: 'API_ERROR',
       details: { statusCode: err.statusCode, response: err.response },
-      exitCode: err.statusCode === 401 || err.statusCode === 403 ? ExitCodes.AUTH_INVALID : ExitCodes.API,
+      exitCode:
+        err instanceof SendLayerAuthenticationError || err.statusCode === 401 || err.statusCode === 403
+          ? ExitCodes.AUTH_INVALID
+          : ExitCodes.API,
     };
   }
   if (err instanceof SendLayerError) {
-    return { message: err.message, code: err.name, exitCode: ExitCodes.VALIDATION };
+    // Without a status the request never got a response: the SDK raises these
+    // for timeouts and transport failures.
+    return { message: err.message, code: 'NETWORK_ERROR', exitCode: ExitCodes.NETWORK };
   }
   if (err instanceof Error) {
     return { message: err.message, code: err.name, exitCode: ExitCodes.GENERIC };

@@ -1,6 +1,14 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { Errors } from '@oclif/core';
-import { SendLayerAPIError, SendLayerError } from 'sendlayer';
+import {
+  SendLayerAPIError,
+  SendLayerAuthenticationError,
+  SendLayerError,
+  SendLayerInternalServerError,
+  SendLayerNotFoundError,
+  SendLayerRateLimitError,
+  SendLayerValidationError,
+} from 'sendlayer';
 import {
   describeError,
   ExitCodes,
@@ -23,9 +31,31 @@ describe('describeError', () => {
     expect(describeError(err).exitCode).toBe(ExitCodes.API);
   });
 
-  it('maps generic SendLayerError to VALIDATION exit code', () => {
-    const err = new SendLayerError('bad input');
-    expect(describeError(err).exitCode).toBe(ExitCodes.VALIDATION);
+  // sendlayer 1.1 raises these instead of SendLayerAPIError. They extend
+  // SendLayerError directly, and used to fall through to VALIDATION.
+  it('maps SendLayerAuthenticationError to AUTH_INVALID exit code', () => {
+    const err = new SendLayerAuthenticationError('Invalid API key', 401, {});
+    expect(describeError(err)).toMatchObject({ code: 'API_ERROR', exitCode: ExitCodes.AUTH_INVALID });
+  });
+
+  it.each([
+    ['SendLayerNotFoundError', new SendLayerNotFoundError('missing', 404, {})],
+    ['SendLayerRateLimitError', new SendLayerRateLimitError('slow down', 429, {})],
+    ['SendLayerInternalServerError', new SendLayerInternalServerError('boom', 500, {})],
+  ])('maps %s to API exit code with its status', (_name, err) => {
+    const desc = describeError(err);
+    expect(desc.exitCode).toBe(ExitCodes.API);
+    expect(desc.details).toMatchObject({ statusCode: err.statusCode });
+  });
+
+  it('maps SendLayerValidationError to VALIDATION exit code, local or from the API', () => {
+    expect(describeError(new SendLayerValidationError('bad input')).exitCode).toBe(ExitCodes.VALIDATION);
+    expect(describeError(new SendLayerValidationError('bad input', 422, {})).exitCode).toBe(ExitCodes.VALIDATION);
+  });
+
+  it('maps a status-less SendLayerError (timeout, transport failure) to NETWORK exit code', () => {
+    const err = new SendLayerError('Request timed out: timeout of 30000ms exceeded');
+    expect(describeError(err)).toMatchObject({ code: 'NETWORK_ERROR', exitCode: ExitCodes.NETWORK });
   });
 
   it('handles plain Error', () => {
