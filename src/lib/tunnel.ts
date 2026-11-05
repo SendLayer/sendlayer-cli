@@ -272,12 +272,15 @@ export async function startListenServer(opts: {
   };
 }
 
+// SendLayer webhook bodies nest the event name: { Signature, EventData: { Event: 'delivered', ... } }.
+// A top-level Event is still accepted for flat payloads.
 function extractEvent(payload: unknown): string | undefined {
-  if (payload && typeof payload === 'object' && 'Event' in payload) {
-    const e = (payload as { Event: unknown }).Event;
-    return typeof e === 'string' ? e : undefined;
+  if (!payload || typeof payload !== 'object') return undefined;
+  const p = payload as { Event?: unknown; EventData?: { Event?: unknown } };
+  if (p.EventData && typeof p.EventData === 'object' && typeof p.EventData.Event === 'string') {
+    return p.EventData.Event;
   }
-  return undefined;
+  return typeof p.Event === 'string' ? p.Event : undefined;
 }
 
 function formatEvent(eventType: string, payload: unknown): string {
