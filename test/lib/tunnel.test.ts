@@ -273,6 +273,48 @@ describe('startListenServer', () => {
     }
   });
 
+  it('reads the event type from a real SendLayer payload (EventData.Event)', async () => {
+    const port = await freePort();
+    const logs: string[] = [];
+    const server = await startListenServer({ port, log: (m) => logs.push(m) });
+
+    try {
+      for (const event of ['delivered', 'clicked']) {
+        await fetch(`http://127.0.0.1:${port}/`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            Signature: { Timestamp: 1793894857, Token: 't', Signature: 's' },
+            EventData: { Event: event, Domain: 'example.com' },
+          }),
+        });
+      }
+      const out = logs.join('\n');
+      expect(out).toContain('[delivered]');
+      expect(out).toContain('[clicked]');
+      expect(out).not.toContain('[unknown]');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('falls back to [unknown] when the payload has no event type', async () => {
+    const port = await freePort();
+    const logs: string[] = [];
+    const server = await startListenServer({ port, log: (m) => logs.push(m) });
+
+    try {
+      await fetch(`http://127.0.0.1:${port}/`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ hello: 'world' }),
+      });
+      expect(logs.join('\n')).toContain('[unknown]');
+    } finally {
+      await server.close();
+    }
+  });
+
   it('forwards the payload to --forward-to', async () => {
     const port = await freePort();
     const targetPort = await freePort();
